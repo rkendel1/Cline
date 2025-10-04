@@ -22,7 +22,8 @@
 			"env": {
 				"IS_DEV": "true",
 				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
-				"CLINE_ENVIRONMENT": "production"
+				"CLINE_ENVIRONMENT": "production",
+				"CLINE_DEV_USE_STANDALONE_TERMINAL": "true"
 			}
 		},
 		{

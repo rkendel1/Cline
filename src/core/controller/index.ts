@@ -64,6 +64,8 @@ export class Controller {
 
 	// NEW: Add workspace manager (optional initially)
 	private workspaceManager?: WorkspaceRootManager
+	private backgroundCommandRunning = false
+	private backgroundCommandTaskId?: string
 
 	constructor(readonly context: vscode.ExtensionContext) {
 		PromptRegistry.getInstance() // Ensure prompts and tools are registered
@@ -184,6 +186,7 @@ export class Controller {
 		const autoApprovalSettings = this.stateManager.getGlobalSettingsKey("autoApprovalSettings")
 		const shellIntegrationTimeout = this.stateManager.getGlobalSettingsKey("shellIntegrationTimeout")
 		const terminalReuseEnabled = this.stateManager.getGlobalStateKey("terminalReuseEnabled")
+		const vscodeTerminalExecutionMode = this.stateManager.getGlobalStateKey("vscodeTerminalExecutionMode") ?? "vscodeTerminal"
 		const terminalOutputLineLimit = this.stateManager.getGlobalSettingsKey("terminalOutputLineLimit")
 		const defaultTerminalProfile = this.stateManager.getGlobalSettingsKey("defaultTerminalProfile")
 		const isNewUser = this.stateManager.getGlobalStateKey("isNewUser")
@@ -231,6 +234,7 @@ export class Controller {
 			terminalReuseEnabled: terminalReuseEnabled ?? true,
 			terminalOutputLineLimit: terminalOutputLineLimit ?? 500,
 			defaultTerminalProfile: defaultTerminalProfile ?? "default",
+			vscodeTerminalExecutionMode,
 			cwd,
 			stateManager: this.stateManager,
 			workspaceManager: this.workspaceManager,
@@ -319,6 +323,7 @@ export class Controller {
 
 	async cancelTask() {
 		if (this.task) {
+			this.updateBackgroundCommandState(false)
 			const { historyItem } = await this.getTaskWithId(this.task.taskId)
 			try {
 				await this.task.abortTask()
@@ -344,6 +349,27 @@ export class Controller {
 			await this.initTask(undefined, undefined, undefined, historyItem) // clears task again, so we need to abortTask manually above
 			// Dont send the state to the webview, the new Cline instance will send state when it's ready.
 			// Sending the state here sent an empty messages array to webview leading to virtuoso having to reload the entire list
+		}
+	}
+
+	updateBackgroundCommandState(running: boolean, taskId?: string) {
+		const nextTaskId = running ? taskId : undefined
+		if (this.backgroundCommandRunning === running && this.backgroundCommandTaskId === nextTaskId) {
+			return
+		}
+		console.log(
+			"[Controller] updateBackgroundCommandState",
+			JSON.stringify({ running, taskId, previousTaskId: this.backgroundCommandTaskId }),
+		)
+		this.backgroundCommandRunning = running
+		this.backgroundCommandTaskId = nextTaskId
+		void this.postStateToWebview()
+	}
+
+	async cancelBackgroundCommand(): Promise<void> {
+		const didCancel = await this.task?.cancelBackgroundCommand()
+		if (!didCancel) {
+			this.updateBackgroundCommandState(false)
 		}
 	}
 
@@ -701,6 +727,7 @@ export class Controller {
 		const globalWorkflowToggles = this.stateManager.getGlobalSettingsKey("globalWorkflowToggles")
 		const shellIntegrationTimeout = this.stateManager.getGlobalSettingsKey("shellIntegrationTimeout")
 		const terminalReuseEnabled = this.stateManager.getGlobalStateKey("terminalReuseEnabled")
+		const vscodeTerminalExecutionMode = this.stateManager.getGlobalStateKey("vscodeTerminalExecutionMode")
 		const defaultTerminalProfile = this.stateManager.getGlobalSettingsKey("defaultTerminalProfile")
 		const isNewUser = this.stateManager.getGlobalStateKey("isNewUser")
 		const welcomeViewCompleted = Boolean(
@@ -772,6 +799,7 @@ export class Controller {
 			globalWorkflowToggles: globalWorkflowToggles || {},
 			shellIntegrationTimeout,
 			terminalReuseEnabled,
+			vscodeTerminalExecutionMode: vscodeTerminalExecutionMode ?? "vscodeTerminal",
 			defaultTerminalProfile,
 			isNewUser,
 			welcomeViewCompleted: welcomeViewCompleted as boolean, // Can be undefined but is set to either true or false by the migration that runs on extension launch in extension.ts
@@ -783,6 +811,8 @@ export class Controller {
 			shouldShowAnnouncement,
 			favoritedModelIds,
 			autoCondenseThreshold,
+			backgroundCommandRunning: this.backgroundCommandRunning,
+			backgroundCommandTaskId: this.backgroundCommandTaskId,
 			// NEW: Add workspace information
 			workspaceRoots: this.workspaceManager?.getRoots() ?? [],
 			primaryRootIndex: this.workspaceManager?.getPrimaryIndex() ?? 0,

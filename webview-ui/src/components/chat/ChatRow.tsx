@@ -9,7 +9,7 @@ import {
 	COMPLETION_RESULT_CHANGES_FLAG,
 } from "@shared/ExtensionMessage"
 import { Int64Request, StringRequest } from "@shared/proto/cline/common"
-import { VSCodeBadge, VSCodeProgressRing } from "@vscode/webview-ui-toolkit/react"
+import { VSCodeBadge, VSCodeButton, VSCodeProgressRing } from "@vscode/webview-ui-toolkit/react"
 import deepEqual from "fast-deep-equal"
 import React, { MouseEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSize } from "react-use"
@@ -61,6 +61,7 @@ interface ChatRowProps {
 	inputValue?: string
 	sendMessageFromChatRow?: (text: string, images: string[], files: string[]) => void
 	onSetQuote: (text: string) => void
+	onCancelCommand?: () => void
 }
 
 interface QuoteButtonState {
@@ -147,8 +148,10 @@ export const ChatRowContent = memo(
 		inputValue,
 		sendMessageFromChatRow,
 		onSetQuote,
+		onCancelCommand,
 	}: ChatRowContentProps) => {
-		const { mcpServers, mcpMarketplaceCatalog, onRelinquishControl } = useExtensionState()
+		const { mcpServers, mcpMarketplaceCatalog, onRelinquishControl, vscodeTerminalExecutionMode, backgroundCommandRunning } =
+			useExtensionState()
 		const [seeNewChangesDisabled, setSeeNewChangesDisabled] = useState(false)
 		const [quoteButtonState, setQuoteButtonState] = useState<QuoteButtonState>({
 			visible: false,
@@ -171,10 +174,23 @@ export const ChatRowContent = memo(
 				? lastModifiedMessage?.text
 				: undefined
 
-		const isCommandExecuting =
-			isLast &&
-			(lastModifiedMessage?.ask === "command" || lastModifiedMessage?.say === "command") &&
-			lastModifiedMessage?.text?.includes(COMMAND_OUTPUT_STRING)
+		const isCommandMessage = message.ask === "command" || message.say === "command"
+		const isCommandExecuting = isCommandMessage && backgroundCommandRunning && isLast
+
+		if (isCommandMessage) {
+			console.log(
+				"[ChatRow] command render state",
+				JSON.stringify({
+					messageTs: message.ts,
+					isLast,
+					backgroundCommandRunning,
+					partial: message.partial,
+					type: message.type,
+					vscodeTerminalExecutionMode,
+					showButton: isCommandExecuting && vscodeTerminalExecutionMode === "backgroundExec",
+				}),
+			)
+		}
 
 		const isMcpServerResponding = isLast && lastModifiedMessage?.say === "mcp_server_request_started"
 
@@ -296,16 +312,12 @@ export const ChatRowContent = memo(
 					]
 				case "command":
 					return [
-						isCommandExecuting ? (
-							<ProgressIndicator />
-						) : (
-							<span
-								className="codicon codicon-terminal"
-								style={{
-									color: normalColor,
-									marginBottom: "-1.5px",
-								}}></span>
-						),
+						<span
+							className="codicon codicon-terminal"
+							style={{
+								color: normalColor,
+								marginBottom: "-1.5px",
+							}}></span>,
 						<span style={{ color: normalColor, fontWeight: "bold" }}>Cline wants to execute this command:</span>,
 					]
 				case "use_mcp_server":
@@ -768,13 +780,19 @@ export const ChatRowContent = memo(
 
 			const requestsApproval = rawCommand.endsWith(COMMAND_REQ_APP_STRING)
 			const command = requestsApproval ? rawCommand.slice(0, -COMMAND_REQ_APP_STRING.length) : rawCommand
+			const showInlineCancel =
+				vscodeTerminalExecutionMode === "backgroundExec" && isCommandExecuting && typeof onCancelCommand === "function"
+
+			const commandHeader = (
+				<div style={headerStyle}>
+					{icon}
+					{title}
+				</div>
+			)
 
 			return (
 				<>
-					<div style={headerStyle}>
-						{icon}
-						{title}
-					</div>
+					{commandHeader}
 					<div
 						style={{
 							borderRadius: 3,
@@ -782,6 +800,51 @@ export const ChatRowContent = memo(
 							overflow: "hidden",
 							backgroundColor: CODE_BLOCK_BG_COLOR,
 						}}>
+						{isCommandExecuting && (
+							<div
+								style={{
+									display: "flex",
+									alignItems: "center",
+									justifyContent: "space-between",
+									padding: "8px 10px",
+									backgroundColor: "rgba(0, 0, 0, 0.2)",
+									borderBottom: "1px solid var(--vscode-editorGroup-border)",
+								}}>
+								<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+									<div
+										style={{
+											width: "8px",
+											height: "8px",
+											borderRadius: "50%",
+											backgroundColor: successColor,
+											animation: "pulse 2s ease-in-out infinite",
+										}}
+									/>
+									<span style={{ color: successColor, fontWeight: 500, fontSize: "13px" }}>Running</span>
+								</div>
+								{showInlineCancel && (
+									<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+										<span
+											className="codicon codicon-link-external"
+											onClick={() => {
+												// Open terminal - you may need to implement this
+											}}
+											style={{
+												fontSize: 13,
+												color: "var(--vscode-descriptionForeground)",
+												cursor: "pointer",
+											}}
+										/>
+										<VSCodeButton
+											appearance="secondary"
+											onClick={() => onCancelCommand?.()}
+											style={{ padding: "2px 8px", height: 24, minWidth: "unset", fontSize: "12px" }}>
+											cancel
+										</VSCodeButton>
+									</div>
+								)}
+							</div>
+						)}
 						<CodeBlock forceWrap={true} source={`${"```"}shell\n${command}\n${"```"}`} />
 						{output.length > 0 && (
 							<div style={{ width: "100%" }}>
